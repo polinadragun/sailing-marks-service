@@ -1,0 +1,135 @@
+services:
+  user-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: userdb
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d userdb" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - userdb-data:/var/lib/postgresql/data
+    networks:
+      - user-network
+
+  user-service:
+    build:
+      context:
+        ../user-service
+    environment:
+      DB_URL: ${USER_DB_URL}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXP}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9093
+    depends_on:
+      user-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    networks:
+      - user-network
+
+  auth-service:
+    build:
+      context:
+        ../auth-service
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXP}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9093
+    depends_on:
+      - user-service
+    ports:
+      - "8082:8080"
+    networks:
+      - user-network
+
+  api-gateway:
+    build:
+      context:
+        ../api-gateway
+    image: your-api-gateway-image
+    environment:
+      GATEWAY_CONFIG: /path/to/config
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXP}
+    depends_on:
+      - user-service
+      - auth-service
+    ports:
+      - "8080:8080"
+    networks:
+      - user-network
+
+  geo-service:
+    build:
+      context: ../geo-service
+    environment:
+      STORM_GLASS_API_KEY: ${STORM_GLASS_API_KEY}
+      FETCH_INTERVAL: "60"
+    ports:
+      - "8083:8080"
+    depends_on:
+      - redis
+    networks:
+      - user-network
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    networks:
+      - user-network
+    healthcheck:
+      test: [ "CMD", "echo", "ruok", "|", "nc", "localhost", "2181" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093
+    ports:
+      - "9093:9093"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "echo > /dev/tcp/localhost/9093" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - user-network
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - user-network
+
+networks:
+  user-network:
+    name: user-network
+    driver: bridge
+
+
+volumes:
+  userdb-data:

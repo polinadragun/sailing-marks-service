@@ -1,0 +1,201 @@
+@startuml
+
+!includeurl https://raw.githubusercontent.com/rabelenda/cicon-plantuml-sprites/v1.0/sprites/kafka.puml
+
+skinparam class {
+    BackgroundColor<<SpringRepository>> LightGreen
+    FontColor<<SpringRepository>> Black
+    StereotypeFontColor Green
+    StereotypeFontSize 15
+    StereotypeFontStyle Italic
+    BorderColor<<SpringRepository>> DarkGreen
+}
+
+rectangle "AuthenticationService" as auth {
+
+    rectangle Infrastructure {
+
+        database RedisAuthenticationStorage as ras {
+        }
+
+        database PostgresUserStorage as pus {
+        }
+
+        queue "<$kafka>" as kafka {
+        }
+
+        package client {
+            class KafkaProducer {
+                + void publishUserCreationEvent(UserCreationEvent event)
+                + void publishLoginEvent(LoginEvent event)
+            }
+        }
+
+        package controller {
+            class AuthenticationController {
+                + ResponseEntity<Void> register(RegisterRequest request)
+                + ResponseEntity<Void> login(LoginRequest request)
+                + ResponseEntity<Void> refresh()
+                + ResponseEntity<Void> logout()
+            }
+        }
+
+        package jwt {
+            class JwtTokenProvider {
+                + generateToken()
+                + validateToken()
+                + extractUserId()
+            }
+        }
+
+        package provider {
+            class DefaultAuthenticationProvider {
+                + AuthenticationResponse authenticate(AuthenticationRequest request)
+            }
+        }
+
+        package repository {
+            interface JpaUserRepository <<SpringRepository>> {}
+            interface JpaRefreshTokenRepository <<SpringRepository>> {}
+            interface JpaRoleRepository <<SpringRepository>> {}
+        }
+
+        JpaRoleRepository --> pus
+        JpaUserRepository --> pus
+        JpaRefreshTokenRepository --> ras
+        KafkaProducer --> kafka
+    }
+
+    rectangle Application {
+        package annotation {
+            interface AuthProvider {
+                AuthType value()
+            }
+        }
+
+        package factory {
+            class AuthenticationProviderFactory {
+                - Map<AuthType, AuthenticationProvider> providers
+                + getProvider(AuthType type)
+            }
+        }
+
+        package service {
+            class AuthenticationService {
+                - AuthenticationProviderFactory providerFactory
+                - TokenProvider tokenProvider
+                + void authenticate(AuthenticationRequest request)
+                + void logout()
+                + void refresh()
+                + void register(RegisterRequest)
+            }
+        }
+
+        package model {
+            enum AuthType
+        }
+
+        package payload {
+            package request {
+                class RegisterRequest
+            }
+
+            package response {
+            }
+        }
+
+        AuthenticationService o-- AuthenticationProviderFactory
+        AuthenticationService --> RegisterRequest
+
+        AuthenticationProviderFactory --> AuthType
+    }
+
+    rectangle Domain {
+        package contract {
+
+            package provider {
+                interface AuthenticationProvider {
+                    + AuthenticationResponse authenticate(AuthenticationRequest request)
+                }
+
+                interface TokenProvider {
+                    + String generateToken(UserId)
+                    + boolean validateToken(String token)
+                    + UserId extractUserId(String token)
+                }
+
+                note bottom of AuthenticationProvider
+                    Это sealed интерфейс
+                end note
+            }
+
+            package repository {
+                interface UserRepository {
+                    + User save(User user)
+                    + Optional<User> findById(UUID id)
+                    + Optional<User> findByEmail(String email)
+                }
+
+                interface RoleRepository {
+                    + Role save(Role role)
+                    + Optional<Role> getRoleByName(String name)
+                }
+
+                interface RefreshTokenRepository {
+                    + RefreshToken save(RefreshToken token)
+                    + Optional<RefreshToken> getRefreshTokenById(UUID id)
+                    + Optional<RefreshToken> getRefreshTokenByUserId(UUID id)
+                }
+            }
+
+            package service {
+                interface RefreshTokenService {
+                    + String createToken(UUID userid)
+                    + boolean validateToken(String token)
+                    + UUID extractUserId(String token)
+                    + void invalidateToken(String token)
+                }
+
+                interface EventPublisher {
+                    + void publishUserCreationEvent(UserCreationEvent event)
+                    + void publishLoginEvent(LoginEvent event)
+                }
+            }
+        }
+
+        package payload {
+            package request {
+                class AuthenticationRequest
+            }
+            package response {
+
+            }
+        }
+
+        package entity {
+            class Role
+            class User
+            class RefreshToken
+        }
+
+        AuthenticationProvider --> AuthenticationRequest
+        UserRepository --> User
+        RoleRepository --> Role
+        RefreshTokenRepository --> RefreshToken
+    }
+
+    JwtTokenProvider ..|> TokenProvider
+    DefaultAuthenticationProvider ..|> AuthenticationProvider
+    JpaUserRepository ..|> UserRepository
+    JpaRefreshTokenRepository ..|> RefreshTokenRepository
+    JpaRoleRepository ..|> RoleRepository
+    KafkaProducer ..|> EventPublisher
+
+    AuthenticationProviderFactory o-- AuthenticationProvider
+
+    AuthenticationController o-- AuthenticationService
+
+    AuthenticationService --> AuthenticationRequest
+}
+
+@enduml

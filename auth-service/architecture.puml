@@ -24,45 +24,84 @@ rectangle "AuthenticationService" as auth {
         queue "<$kafka>" as kafka {
         }
 
-        package client {
-            class KafkaProducer {
-                + void publishUserCreationEvent(UserCreationEvent event)
-                + void publishLoginEvent(LoginEvent event)
-            }
-        }
+        package adapter {
+            package out {
+                package event {
+                    class KafkaProducer {
+                        + void publishUserCreationEvent(UserCreationEvent event)
+                        + void publishLoginEvent(LoginEvent event)
+                    }
+                }
 
-        package controller {
-            class AuthenticationController {
-                + ResponseEntity<Void> register(RegisterRequest request)
-                + ResponseEntity<Void> login(LoginRequest request)
-                + ResponseEntity<Void> refresh()
-                + ResponseEntity<Void> logout()
-            }
-        }
+                package auth {
+                       class DefaultAuthenticationProvider {
+                           + AuthenticationResponse authenticate(AuthenticationRequest request)
+                       }
+                }
 
-        package jwt {
-            class JwtTokenProvider {
-                + generateToken()
-                + validateToken()
-                + extractUserId()
-            }
-        }
+                package jwt {
+                   class JwtTokenProvider {
+                       + String generateToken(UserId)
+                       + boolean validateToken(String token)
+                       + UserId extractUserId(String token)
+                   }
 
-        package provider {
-            class DefaultAuthenticationProvider {
-                + AuthenticationResponse authenticate(AuthenticationRequest request)
-            }
-        }
+                   class JwtRefreshTokenService {
+                       + String createToken(UUID userid)
+                       + boolean validateToken(String token)
+                       + UUID extractUserId(String token)
+                       + void invalidateToken(String token)
+                   }
+                }
 
-        package repository {
-            interface JpaUserRepository <<SpringRepository>> {}
-            interface JpaRefreshTokenRepository <<SpringRepository>> {}
-            interface JpaRoleRepository <<SpringRepository>> {}
+                package persistence {
+                    class JpaUserAdapter {
+                        - JpaUserRepository repository
+                        + User save(User user)
+                        + Optional<User> findById(UUID id)
+                        + Optional<User> findByEmail(String email)
+                    }
+
+                    class JpaRoleAdapter {
+                        - JpaRoleRepository repository
+                        + Role save(Role role)
+                        + Optional<Role> getRoleByName(String name)
+                    }
+
+                    class RedisRefreshTokenAdapter {
+                        - RedisRefreshTokenRepository repository
+                        + RefreshToken save(RefreshToken token)
+                        + Optional<RefreshToken> getRefreshTokenById(UUID id)
+                        + Optional<RefreshToken> getRefreshTokenByUserId(UUID id)
+                    }
+                }
+
+                package repository {
+                    interface JpaUserRepository <<SpringRepository>> {}
+                    interface RedisRefreshTokenRepository <<SpringRepository>> {}
+                    interface JpaRoleRepository <<SpringRepository>> {}
+                }
+
+                JpaUserAdapter o-- JpaUserRepository
+                JpaRoleAdapter o-- JpaRoleRepository
+                RedisRefreshTokenAdapter o-- RedisRefreshTokenRepository
+            }
+
+            package in {
+                package web {
+                    class AuthenticationController {
+                        + ResponseEntity<Void> register(RegisterRequest request)
+                        + ResponseEntity<Void> login(LoginRequest request)
+                        + ResponseEntity<Void> refresh()
+                        + ResponseEntity<Void> logout()
+                    }
+                }
+            }
         }
 
         JpaRoleRepository --> pus
         JpaUserRepository --> pus
-        JpaRefreshTokenRepository --> ras
+        RedisRefreshTokenRepository --> ras
         KafkaProducer --> kafka
     }
 
@@ -78,6 +117,12 @@ rectangle "AuthenticationService" as auth {
                 - Map<AuthType, AuthenticationProvider> providers
                 + getProvider(AuthType type)
             }
+
+            note right of AuthenticationProviderFactory
+                При инициализации сканирует все AuthenticationProvider,
+                извлекает значение @AuthProvider(AuthType)
+                и регистрирует в Map<AuthType, AuthenticationProvider>
+            end note
         }
 
         package service {
@@ -92,15 +137,14 @@ rectangle "AuthenticationService" as auth {
         }
 
         package model {
-            enum AuthType
+            enum AuthType {
+                EmailPassword
+            }
         }
 
         package payload {
             package request {
                 class RegisterRequest
-            }
-
-            package response {
             }
         }
 
@@ -167,12 +211,9 @@ rectangle "AuthenticationService" as auth {
             package request {
                 class AuthenticationRequest
             }
-            package response {
-
-            }
         }
 
-        package entity {
+        package model {
             class Role
             class User
             class RefreshToken
@@ -185,17 +226,27 @@ rectangle "AuthenticationService" as auth {
     }
 
     JwtTokenProvider ..|> TokenProvider
-    DefaultAuthenticationProvider ..|> AuthenticationProvider
-    JpaUserRepository ..|> UserRepository
-    JpaRefreshTokenRepository ..|> RefreshTokenRepository
-    JpaRoleRepository ..|> RoleRepository
+    DefaultAuthenticationProvider ..|> JpaUserAdapter
+    JpaUserAdapter ..|> UserRepository
+    RedisRefreshTokenAdapter ..|> RefreshTokenRepository
+    JpaRoleAdapter ..|> RoleRepository
     KafkaProducer ..|> EventPublisher
+    JwtRefreshTokenService ..|> RefreshTokenService
 
     AuthenticationProviderFactory o-- AuthenticationProvider
 
     AuthenticationController o-- AuthenticationService
 
     AuthenticationService --> AuthenticationRequest
+    AuthenticationService o-- TokenProvider
+    AuthenticationService o-- RoleRepository
+
+    DefaultAuthenticationProvider o-- JpaUserAdapter
+    DefaultAuthenticationProvider ..> AuthProvider
+
+    JwtRefreshTokenService o-- RedisRefreshTokenAdapter
+
+    RegisterRequest --> Role
 }
 
 @enduml

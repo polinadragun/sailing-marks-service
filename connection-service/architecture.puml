@@ -1,0 +1,106 @@
+@startuml
+rectangle "WebSocketConnectionManager" as sock {
+    database RedisConnectionStorage as rcs {
+    }
+
+    package client {
+        class KafkaConsumer {
+            + void listenLoginEvent()
+            + void listenLogoutEvent()
+        }
+
+        note right of KafkaConsumer
+            Не реактивная так как в секунду
+            вряд-ли будет больше 100 сообщений.
+        end note
+
+        class KafkaProducer {
+            + void sendConnectionCreationEvent()
+            + void sendConnectionClosedEvent()
+        }
+
+        note bottom of KafkaProducer
+            Не уверен что есть смысл их отправлять
+        end note
+    }
+
+    package config {
+        class RedisConfig {
+            + LettuceConnectionFactory getConnectionFactory()
+            + ReactiveRedisTemplate<String, String> getRedisTemplate(ReactiveRedisConnectionFactory connectionFactory)
+        }
+    }
+
+    package event {
+        class ConnectionCreationEvent
+    }
+
+    package service {
+        class WebSocketManager {
+            + Mono<Void> createConnection(UUID sessionId)
+            + Mono<Void> deleteConnection(UUID connectionId)
+            + Mono<Void> deleteConnectionBySessionId(UUID sessionId)
+        }
+
+        class ConnectionCleanerService {
+            - ConnectionScanner scanner
+            + void start()
+            + void stop()
+            + boolean getStatus()
+        }
+
+        class ConnectionScanner {
+            + void scan()
+        }
+
+        note bottom of ConnectionCleanerService
+            Сервис запускает daemon поток, который бегает по redis
+            и проверяет то насколько долго существует соединение.
+            Нужно для того чтобы избавляться от "мертвых" соединений.
+            Daemon запускается в postConstruct, а при повторном вызове run
+            должна происходить проверка статуса.
+
+            Мертвыми считаем соединения которые существуют, более чем n количество
+            времени.
+        end note
+
+        note right of WebSocketManager
+            Методы удаления только меняют статус соединения на REMOVED
+            Самим удалением из бд занимается только ConnectionScanner
+        end note
+    }
+
+    package repository {
+        interface ConnectionRepository {
+            + Mono<Connection> getConnectionById(UUID id)
+            + Flux<Connection> getAllConnections()
+            + Connection save(Connection connection)
+            + void deleteConnectionById(UUID id)
+        }
+    }
+
+    package entity {
+        class Connection {
+        }
+    }
+
+    kafka --> KafkaConsumer : Получает событие\nо необходимости\nсоздания соединения
+    KafkaProducer --> kafka : Отправляет событие\nо том, что\nсобытие было создано
+
+    KafkaConsumer o-- WebSocketManager
+
+    WebSocketManager o-- KafkaProducer
+    WebSocketManager o-- ConnectionRepository
+
+    ConnectionCleanerService o-- ConnectionScanner
+
+    ConnectionRepository <--> rcs
+    ConnectionRepository --> Connection
+}
+
+note bottom of sock
+    Работает на WebFlux, так как теоретически может
+    одновременно работать с 10k+ соединениями одновременно.
+    (Здесь имеется ввиду именно активные соединения)
+end note
+@enduml

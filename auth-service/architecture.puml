@@ -28,9 +28,27 @@ rectangle "AuthenticationService" as auth {
             package out {
                 package event {
                     class KafkaProducer {
-                        + void publishUserCreationEvent(UserCreationEvent event)
-                        + void publishLoginEvent(LoginEvent event)
+                        + void publish(DomainEvent event)
                     }
+
+                    class Event<T> {
+                        - T data
+                        - Instant timestamp
+                        - UUID id
+                        - String eventType
+                    }
+
+                    KafkaProducer --> Event
+
+                    note right of KafkaProducer
+                        Event<T> является инфраструктурной оберткой над DomainEvent
+                        и именно он публикуется в kafka
+                        нужно для того, чтобы, во-первых, мы не прописывали жесткий
+                        контракт event в domain, DomainEvent по сути просто маркер,
+                        во-вторых, чтобы скрыть инфраструктурные детали. А так же
+                        это позволяет нам использовать единый сериализатор для Event<T>,
+                        при этом нам не нужно явно знать о сериализации T
+                    end note
                 }
 
                 package auth {
@@ -98,11 +116,6 @@ rectangle "AuthenticationService" as auth {
                 }
             }
         }
-
-        JpaRoleRepository --> pus
-        JpaUserRepository --> pus
-        RedisRefreshTokenRepository --> ras
-        KafkaProducer --> kafka
     }
 
     rectangle Application {
@@ -145,17 +158,18 @@ rectangle "AuthenticationService" as auth {
         package payload {
             package request {
                 class RegisterRequest
+                class LoginRequest
             }
         }
-
-        AuthenticationService o-- AuthenticationProviderFactory
-        AuthenticationService --> RegisterRequest
-
-        AuthenticationProviderFactory --> AuthType
     }
 
     rectangle Domain {
         package contract {
+
+            package event {
+                interface DomainEvent {
+                }
+            }
 
             package provider {
                 interface AuthenticationProvider {
@@ -201,8 +215,7 @@ rectangle "AuthenticationService" as auth {
                 }
 
                 interface EventPublisher {
-                    + void publishUserCreationEvent(UserCreationEvent event)
-                    + void publishLoginEvent(LoginEvent event)
+                    + void publish(DomainEvent event)
                 }
             }
         }
@@ -219,10 +232,10 @@ rectangle "AuthenticationService" as auth {
             class RefreshToken
         }
 
-        AuthenticationProvider --> AuthenticationRequest
-        UserRepository --> User
-        RoleRepository --> Role
-        RefreshTokenRepository --> RefreshToken
+        package event {
+            class UserCreationEvent
+            class LoginEvent
+        }
     }
 
     JwtTokenProvider ..|> TokenProvider
@@ -232,21 +245,54 @@ rectangle "AuthenticationService" as auth {
     JpaRoleAdapter ..|> RoleRepository
     KafkaProducer ..|> EventPublisher
     JwtRefreshTokenService ..|> RefreshTokenService
+    UserCreationEvent ..|> DomainEvent
+    LoginEvent ..|> DomainEvent
 
     AuthenticationProviderFactory o-- AuthenticationProvider
+    AuthenticationProviderFactory --> AuthType
 
     AuthenticationController o-- AuthenticationService
+    AuthenticationController --> RegisterRequest
+    AuthenticationController --> LoginRequest
 
     AuthenticationService --> AuthenticationRequest
     AuthenticationService o-- TokenProvider
     AuthenticationService o-- RoleRepository
+    AuthenticationService o-- AuthenticationProviderFactory
+    AuthenticationService --> RegisterRequest
+
+    AuthenticationProvider --> AuthenticationRequest
 
     DefaultAuthenticationProvider o-- JpaUserAdapter
     DefaultAuthenticationProvider ..> AuthProvider
+    DefaultAuthenticationProvider --> AuthenticationRequest
 
     JwtRefreshTokenService o-- RedisRefreshTokenAdapter
 
+    JpaUserAdapter --> User
+
+    JpaRoleAdapter --> Role
+
+    JpaRoleRepository --> pus
+
+    JpaUserRepository --> pus
+
+    RedisRefreshTokenRepository --> ras
+
+    RedisRefreshTokenAdapter --> RefreshToken
+
     RegisterRequest --> Role
+
+    KafkaProducer --> DomainEvent
+    KafkaProducer --> kafka
+
+    UserRepository --> User
+
+    RoleRepository --> Role
+
+    RefreshTokenRepository --> RefreshToken
+
+    EventPublisher --> DomainEvent
 }
 
 @enduml
